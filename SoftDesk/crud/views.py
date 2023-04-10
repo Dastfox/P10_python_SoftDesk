@@ -7,24 +7,138 @@ from .serializers import (
     ProjectSerializer,
     IssueSerializer,
     CommentSerializer,
+    UserCreateSerializer,
 )
+from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework import status
+from rest_framework.views import APIView
+from rest_framework.response import Response
+from django.contrib.auth import authenticate
+from uuid import uuid4
 
 
-# Add your views here (examples provided for a few views)
-class ProjectListCreateView(generics.ListCreateAPIView):
-    queryset = Project.objects.all()
-    serializer_class = ProjectSerializer
-    permission_classes = [permissions.IsAuthenticated]
+####################
+# Permissions      #
+####################
+
+
+class IsContributor(permissions.BasePermission):
+    """
+    Custom permission to only allow contributors of a project to modify it.
+    """
+
+    def has_object_permission(self, request, view, obj):
+        if obj.author_user_id.id == request.user.id:
+            return True
+
+        if request.method in permissions.SAFE_METHODS:
+            try:
+                contributor = Contributor.objects.get(
+                    user_id=request.user.id, project_id=obj.id
+                )
+                return (
+                    contributor.permission == "user"
+                    or contributor.permission == "admin"
+                )
+            except Contributor.DoesNotExist:
+                return False
+
+        # Write permissions are only allowed to the admin contributor of the project.
+        try:
+            contributor = Contributor.objects.get(
+                user_id=request.user.id, project_id=obj.id
+            )
+            return contributor.permission == "admin"
+        except Contributor.DoesNotExist:
+            return False
+
+    def has_permission(self, request, view):
+        if view.action == "list":
+            project_id = view.kwargs.get("project_id")
+            try:
+                project = Project.objects.get(id=project_id)
+            except Project.DoesNotExist:
+                return False
+            return self.has_object_permission(request, view, project)
+        elif view.action == "destroy":
+            contributor_id = view.kwargs.get("pk")
+            try:
+                contributor = Contributor.objects.get(id=contributor_id)
+            except Contributor.DoesNotExist:
+                return False
+            return self.has_object_permission(request, view, contributor.project)
+        else:
+            return True
+
+
+class IsAuthor(permissions.BasePermission):
+    """
+    Custom permission to only allow author and admin contributors of a project to modify it.
+    """
+
+    def has_object_permission(self, request, view, obj):
+        if obj.author_user_id.id == request.user.id:
+            return True
+
+        # Write permissions are only allowed to the author and admin contributors of the project.
+        try:
+            contributor = Contributor.objects.get(
+                user_id=request.user.id, project_id=obj.id
+            )
+            return contributor.permission == "admin"
+        except Contributor.DoesNotExist:
+            return False
+
+
+####################
+# ViewSets         #
+####################
+
+
+class CustomSignupView(APIView):
+    def post(self, request):
+        serializer = UserCreateSerializer(data=request.data)
+        if serializer.is_valid():
+            user = serializer.save()
+            refresh = RefreshToken.for_user(user)
+            return Response(
+                {
+                    "refresh": str(refresh),
+                    "access": str(refresh.access_token),
+                }
+            )
+        else:
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+class CustomLoginView(APIView):
+    def post(self, request):
+        username = request.data.get("username")
+        password = request.data.get("password")
+        user = authenticate(username=username, password=password)
+        if user:
+            refresh = RefreshToken.for_user(user)
+            return Response(
+                {
+                    "refresh": str(refresh),
+                    "access": str(refresh.access_token),
+                }
+            )
+        else:
+            return Response(
+                {"error": "Invalid Credentials"}, status=status.HTTP_401_UNAUTHORIZED
+            )
 
 
 class ProjectRetrieveUpdateDestroyView(generics.RetrieveUpdateDestroyAPIView):
     queryset = Project.objects.all()
     serializer_class = ProjectSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.IsAuthenticated, IsContributor]
+
+    def get_queryset(self):
+        return Project.objects.filter(author_user_id=self.request.user)
 
 
-# Repeat this process for each of your views, updating the queryset, serializer_class, and permissions as needed.
-# Replace the existing ProjectListCreateView with this one
 class ProjectListCreateView(generics.ListCreateAPIView):
     serializer_class = ProjectSerializer
     permission_classes = [permissions.IsAuthenticated]
@@ -36,31 +150,58 @@ class ProjectListCreateView(generics.ListCreateAPIView):
         serializer.save(author_user_id=self.request.user)
 
 
-# Add the remaining views
-# Collaborator views
-class CollaboratorCreateView(generics.CreateAPIView):
-    queryset = Contributor.objects.all()
+class CollaboratorListCreateView(generics.ListCreateAPIView):
     serializer_class = ContributorSerializer
-    permission_classes = [permissions.IsAuthenticated]
-
-
-class CollaboratorListView(generics.ListAPIView):
-    serializer_class = ContributorSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.IsAuthenticated, IsAuthor]
 
     def get_queryset(self):
         project_id = self.kwargs["project_id"]
         return Contributor.objects.filter(project_id=project_id)
 
+    def post(self, request, project_id):
+        # Check if project exists
+        project = get_object_or_404(Project, id=project_id)
+
+        # Check if contributor already exists
+        try:
+            contributor = Contributor.objects.get(
+                user_id=request.data["user_id"], project_id=project_id
+            )
+
+            # Update the contributor's permission if it has changed
+            if contributor.permission != request.data["permission"]:
+                contributor.permission = request.data["permission"]
+                contributor.save()
+
+                serializer = self.serializer_class(contributor)
+                return Response(serializer.data, status=status.HTTP_200_OK)
+
+            # Return error response if contributor already exists with the same permission
+            else:
+                return Response(
+                    {"error": "Contributor already exists with the same permission."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+        # Create new contributor if it doesn't already exist
+        except Contributor.DoesNotExist:
+            serializer = self.serializer_class(data=request.data)
+
+            if serializer.is_valid():
+                serializer.save(project_id=project_id)
+                return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
 
 class CollaboratorDestroyView(generics.DestroyAPIView):
     queryset = Contributor.objects.all()
     serializer_class = ContributorSerializer
-    permission_classes = [permissions.IsAuthenticated]
-    lookup_url_kwarg = "user_id"
+    permission_classes = [permissions.IsAuthenticated, IsContributor]
+    lookup_url_kwarg = "pk"
 
 
-# Issue views
 class IssueListCreateView(generics.ListCreateAPIView):
     serializer_class = IssueSerializer
     permission_classes = [permissions.IsAuthenticated]
@@ -81,7 +222,6 @@ class IssueRetrieveUpdateDestroyView(generics.RetrieveUpdateDestroyAPIView):
 
     def get_queryset(self):
         project_id = self.kwargs["project_id"]
-
 
 
 class CommentListCreateView(generics.ListCreateAPIView):

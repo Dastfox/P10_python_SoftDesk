@@ -1,11 +1,12 @@
 from django.urls import path
 import crud.views as views
 import django.contrib.auth.views
+from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
 urlpatterns = [
     # User registration and login
-    path("login/",  django.contrib.auth.views.LoginView.as_view(), name="login"),
-    path("signup/", django.contrib.auth.views.LoginView.as_view(), name="signup"),
+    path("auth/signup/", views.CustomSignupView.as_view(), name="signup"),
+    path("auth/login/", views.CustomLoginView.as_view(), name="login"),
     # Project endpoints
     path(
         "projects/", views.ProjectListCreateView.as_view(), name="project-list-create"
@@ -18,12 +19,7 @@ urlpatterns = [
     # Collaborator endpoints
     path(
         "projects/<int:project_id>/users/",
-        views.CollaboratorCreateView.as_view(),
-        name="collaborator-create",
-    ),
-    path(
-        "projects/<int:project_id>/users/",
-        views.CollaboratorListView.as_view(),
+        views.CollaboratorListCreateView.as_view(),
         name="collaborator-list",
     ),
     path(
