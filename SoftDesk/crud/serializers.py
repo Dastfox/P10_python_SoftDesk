@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Contributor, Project, Issiue, Comment, User
+from .models import Contributor, Project, Issue, Comment, User
 from django.contrib.auth.forms import UserCreationForm
 
 
@@ -17,7 +17,7 @@ class ProjectSerializer(serializers.ModelSerializer):
 
 class IssueSerializer(serializers.ModelSerializer):
     class Meta:
-        model = Issiue
+        model = Issue
         fields = "__all__"
 
 

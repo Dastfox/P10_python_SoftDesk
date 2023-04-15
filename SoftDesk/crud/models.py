@@ -18,13 +18,20 @@ class Project(models.Model):
     author_user_id = models.ForeignKey(User, on_delete=models.CASCADE)
 
 
-class Issiue(models.Model):
+class Issue(models.Model):
     title = models.CharField(max_length=100)
     desc = models.CharField(max_length=1000)
-    tag = models.CharField(max_length=100)
-    priority = models.CharField(max_length=10)
+    TAG_CHOICES = [("bug", "Bug"), ("feature", "Feature"), ("task", "Task")]
+    tag = models.CharField(max_length=100, choices=TAG_CHOICES)
+    PRIORITY_CHOICES = [("low", "Low"), ("medium", "Medium"), ("high", "High")]
+    priority = models.CharField(max_length=10, choices=PRIORITY_CHOICES)
     project_id = models.IntegerField()
-    status = models.CharField(max_length=10)
+    STATUS_CHOICES = [
+        ("open", "Open"),
+        ("in progress", "In Progress"),
+        ("closed", "Closed"),
+    ]
+    status = models.CharField(max_length=12, choices=STATUS_CHOICES)
     author_user_id = models.ForeignKey(
         User, on_delete=models.CASCADE, related_name="author_issues"
     )
@@ -38,5 +45,5 @@ class Comment(models.Model):
     comment_id = models.IntegerField()
     description = models.CharField(max_length=1000)
     author_user_id = models.ForeignKey(User, on_delete=models.CASCADE)
-    issue_id = models.ForeignKey(Issiue, on_delete=models.CASCADE)
+    issue_id = models.ForeignKey(Issue, on_delete=models.CASCADE)
     created_time = models.DateTimeField(auto_now_add=True)

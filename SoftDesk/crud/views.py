@@ -1,7 +1,7 @@
 from django.shortcuts import get_object_or_404
 from rest_framework import generics, permissions, status
 from rest_framework.response import Response
-from .models import Contributor, Project, Issiue, Comment
+from .models import Contributor, Project, Issue, Comment
 from .serializers import (
     ContributorSerializer,
     ProjectSerializer,
@@ -28,47 +28,27 @@ class IsContributor(permissions.BasePermission):
     """
 
     def has_object_permission(self, request, view, obj):
-        if obj.author_user_id.id == request.user.id:
-            return True
+        # Get the project_id from the obj
+        project_id = obj.project_id
 
-        if request.method in permissions.SAFE_METHODS:
-            try:
-                contributor = Contributor.objects.get(
-                    user_id=request.user.id, project_id=obj.id
-                )
-                return (
-                    contributor.permission == "user"
-                    or contributor.permission == "admin"
-                )
-            except Contributor.DoesNotExist:
-                return False
-
-        # Write permissions are only allowed to the admin contributor of the project.
         try:
             contributor = Contributor.objects.get(
-                user_id=request.user.id, project_id=obj.id
+                user_id=request.user.id, project_id=project_id
             )
-            return contributor.permission == "admin"
+
+            if contributor.permission == "admin":
+                return True
+
+            if contributor.permission == "user":
+                return (
+                    request.method in permissions.SAFE_METHODS
+                    or request.method == "POST"
+                )
+
         except Contributor.DoesNotExist:
             return False
 
-    def has_permission(self, request, view):
-        if view.action == "list":
-            project_id = view.kwargs.get("project_id")
-            try:
-                project = Project.objects.get(id=project_id)
-            except Project.DoesNotExist:
-                return False
-            return self.has_object_permission(request, view, project)
-        elif view.action == "destroy":
-            contributor_id = view.kwargs.get("pk")
-            try:
-                contributor = Contributor.objects.get(id=contributor_id)
-            except Contributor.DoesNotExist:
-                return False
-            return self.has_object_permission(request, view, contributor.project)
-        else:
-            return True
+        return False
 
 
 class IsAuthor(permissions.BasePermission):
@@ -77,22 +57,35 @@ class IsAuthor(permissions.BasePermission):
     """
 
     def has_object_permission(self, request, view, obj):
-        if obj.author_user_id.id == request.user.id:
+        project_id = obj.project_id
+        try:
+            project = Project.objects.get(pk=project_id)
+        except Project.DoesNotExist:
+            return False
+
+        # Check if the request user is the author of the project
+        if project.author_user_id.id == request.user.id:
             return True
 
-        # Write permissions are only allowed to the author and admin contributors of the project.
+        # Write permissions are only allowed to the author and admin contributors of the project
         try:
             contributor = Contributor.objects.get(
-                user_id=request.user.id, project_id=obj.id
+                user_id=request.user.id, project_id=project_id
             )
             return contributor.permission == "admin"
         except Contributor.DoesNotExist:
             return False
 
+    class IsIssueAuthor(permissions.BasePermission):
+        def has_object_permission(self, request, view, obj):
+            return request.user == obj.author_user_id
+
 
 ####################
 # ViewSets         #
 ####################
+
+"""AUTHENTICATION"""
 
 
 class CustomSignupView(APIView):
@@ -130,6 +123,9 @@ class CustomLoginView(APIView):
             )
 
 
+"""PROJECTS"""
+
+
 class ProjectRetrieveUpdateDestroyView(generics.RetrieveUpdateDestroyAPIView):
     queryset = Project.objects.all()
     serializer_class = ProjectSerializer
@@ -148,6 +144,9 @@ class ProjectListCreateView(generics.ListCreateAPIView):
 
     def perform_create(self, serializer):
         serializer.save(author_user_id=self.request.user)
+
+
+"""COLLABORATORS"""
 
 
 class CollaboratorListCreateView(generics.ListCreateAPIView):
@@ -194,21 +193,58 @@ class CollaboratorListCreateView(generics.ListCreateAPIView):
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
-
-class CollaboratorDestroyView(generics.DestroyAPIView):
+class CollaboratorRetrieveUpdateDestroyView(generics.RetrieveUpdateDestroyAPIView):
     queryset = Contributor.objects.all()
     serializer_class = ContributorSerializer
-    permission_classes = [permissions.IsAuthenticated, IsContributor]
-    lookup_url_kwarg = "pk"
+    permission_classes = [permissions.IsAuthenticated, IsAuthor]
+    lookup_url_kwarg = "user_id"
+
+    def get_object(self):
+        project_id = self.kwargs["project_id"]
+        user_id = self.kwargs[self.lookup_url_kwarg]
+        obj = get_object_or_404(Contributor, project_id=project_id, user_id=user_id)
+        self.check_object_permissions(self.request, obj)
+        return obj
+
+    def get(self, request, *args, **kwargs):
+        instance = self.get_object()
+        serializer = self.get_serializer(instance)
+        return Response(serializer.data)
+
+    def put(self, request, *args, **kwargs):
+        instance = self.get_object()
+        serializer = self.get_serializer(instance, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data)
+
+    def delete(self, request, *args, **kwargs):
+        instance = self.get_object()
+        self.perform_destroy(instance)
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+"""ISSUES"""
 
 
 class IssueListCreateView(generics.ListCreateAPIView):
     serializer_class = IssueSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.IsAuthenticated, IsContributor]
 
     def get_queryset(self):
         project_id = self.kwargs["project_id"]
-        return Issiue.objects.filter(project_id=project_id)
+
+        # Check if the user is a contributor to the project
+        is_contributor = Contributor.objects.filter(
+            user_id=self.request.user.id, project_id=project_id
+        ).exists()
+
+        if is_contributor:
+            # Filter issues based on the project_id
+            return Issue.objects.filter(project_id=project_id)
+        else:
+            # Return an empty queryset if the user is not a contributor
+            return Issue.objects.none()
 
     def perform_create(self, serializer):
         serializer.save(
@@ -218,10 +254,35 @@ class IssueListCreateView(generics.ListCreateAPIView):
 
 class IssueRetrieveUpdateDestroyView(generics.RetrieveUpdateDestroyAPIView):
     serializer_class = IssueSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.IsAuthenticated, IsContributor]
+    lookup_url_kwarg = "issue_id"
 
-    def get_queryset(self):
+    def get_object(self):
         project_id = self.kwargs["project_id"]
+        issue_id = self.kwargs[self.lookup_url_kwarg]
+        obj = get_object_or_404(Issue, project_id=project_id, id=issue_id)
+        self.check_object_permissions(self.request, obj)
+        return obj
+
+    def get(self, request, *args, **kwargs):
+        instance = self.get_object()
+        serializer = self.get_serializer(instance)
+        return Response(serializer.data)
+
+    def put(self, request, *args, **kwargs):
+        instance = self.get_object()
+        serializer = self.get_serializer(instance, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data)
+
+    def delete(self, request, *args, **kwargs):
+        instance = self.get_object()
+        self.perform_destroy(instance)
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+"""COMMENTS"""
 
 
 class CommentListCreateView(generics.ListCreateAPIView):
@@ -233,7 +294,7 @@ class CommentListCreateView(generics.ListCreateAPIView):
         return Comment.objects.filter(issue_id=issue_id)
 
     def perform_create(self, serializer):
-        issue = get_object_or_404(Issiue, id=self.kwargs["issue_id"])
+        issue = get_object_or_404(Issue, id=self.kwargs["issue_id"])
         serializer.save(author_user_id=self.request.user, issue_id=issue)
 
 
