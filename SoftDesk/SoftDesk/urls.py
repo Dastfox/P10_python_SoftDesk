@@ -12,7 +12,7 @@ urlpatterns = [
         "projects/", views.ProjectListCreateView.as_view(), name="project-list-create"
     ),
     path(
-        "projects/<int:pk>/",
+        "projects/<int:project_id>/",
         views.ProjectRetrieveUpdateDestroyView.as_view(),
         name="project-detail",
     ),
@@ -25,7 +25,7 @@ urlpatterns = [
     path(
         "projects/<int:project_id>/users/<int:user_id>",
         views.CollaboratorRetrieveUpdateDestroyView.as_view(),
-        name="collaborator-delete",
+        name="collaborator-detail",
     ),
     # Issue endpoints
     path(
@@ -45,7 +45,7 @@ urlpatterns = [
         name="comment-list-create",
     ),
     path(
-        "projects/<int:project_id>/issues/<int:issue_id>/comments/<int:pk>/",
+        "projects/<int:project_id>/issues/<int:issue_id>/comments/<int:comment_id>/",
         views.CommentRetrieveUpdateDestroyView.as_view(),
         name="comment-detail",
     ),

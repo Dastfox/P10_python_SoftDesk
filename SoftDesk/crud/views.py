@@ -15,71 +15,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from django.contrib.auth import authenticate
 from uuid import uuid4
-
-
-####################
-# Permissions      #
-####################
-
-
-class IsContributor(permissions.BasePermission):
-    """
-    Custom permission to only allow contributors of a project to modify it.
-    """
-
-    def has_object_permission(self, request, view, obj):
-        # Get the project_id from the obj
-        project_id = obj.project_id
-
-        try:
-            contributor = Contributor.objects.get(
-                user_id=request.user.id, project_id=project_id
-            )
-
-            if contributor.permission == "admin":
-                return True
-
-            if contributor.permission == "user":
-                return (
-                    request.method in permissions.SAFE_METHODS
-                    or request.method == "POST"
-                )
-
-        except Contributor.DoesNotExist:
-            return False
-
-        return False
-
-
-class IsAuthor(permissions.BasePermission):
-    """
-    Custom permission to only allow author and admin contributors of a project to modify it.
-    """
-
-    def has_object_permission(self, request, view, obj):
-        project_id = obj.project_id
-        try:
-            project = Project.objects.get(pk=project_id)
-        except Project.DoesNotExist:
-            return False
-
-        # Check if the request user is the author of the project
-        if project.author_user_id.id == request.user.id:
-            return True
-
-        # Write permissions are only allowed to the author and admin contributors of the project
-        try:
-            contributor = Contributor.objects.get(
-                user_id=request.user.id, project_id=project_id
-            )
-            return contributor.permission == "admin"
-        except Contributor.DoesNotExist:
-            return False
-
-    class IsIssueAuthor(permissions.BasePermission):
-        def has_object_permission(self, request, view, obj):
-            return request.user == obj.author_user_id
-
+from .permissions import IsContributor, IsAuthor
 
 ####################
 # ViewSets         #
@@ -130,9 +66,10 @@ class ProjectRetrieveUpdateDestroyView(generics.RetrieveUpdateDestroyAPIView):
     queryset = Project.objects.all()
     serializer_class = ProjectSerializer
     permission_classes = [permissions.IsAuthenticated, IsContributor]
+    lookup_url_kwarg = "project_id"
 
     def get_queryset(self):
-        return Project.objects.filter(author_user_id=self.request.user)
+        return Project.objects.filter(id=self.kwargs[self.lookup_url_kwarg])
 
 
 class ProjectListCreateView(generics.ListCreateAPIView):
@@ -140,10 +77,21 @@ class ProjectListCreateView(generics.ListCreateAPIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
-        return Project.objects.filter(author_user_id=self.request.user)
+        user = self.request.user
+
+        # Get all projects for which the user is the author
+        author_projects = Project.objects.filter(author_user=user)
+
+        # Get all projects for which the user is a contributor
+        contributed_projects = Project.objects.filter(contributors=user)
+
+        # Combine the two sets of projects and remove duplicates
+        queryset = author_projects.union(contributed_projects)
+
+        return queryset
 
     def perform_create(self, serializer):
-        serializer.save(author_user_id=self.request.user)
+        serializer.save(author_user=self.request.user)
 
 
 """COLLABORATORS"""
@@ -164,7 +112,7 @@ class CollaboratorListCreateView(generics.ListCreateAPIView):
         # Check if contributor already exists
         try:
             contributor = Contributor.objects.get(
-                user_id=request.data["user_id"], project_id=project_id
+                user_id=request.user.id, project_id=project_id
             )
 
             # Update the contributor's permission if it has changed
@@ -230,9 +178,10 @@ class CollaboratorRetrieveUpdateDestroyView(generics.RetrieveUpdateDestroyAPIVie
 class IssueListCreateView(generics.ListCreateAPIView):
     serializer_class = IssueSerializer
     permission_classes = [permissions.IsAuthenticated, IsContributor]
+    lookup_url_kwarg = "project_id"
 
     def get_queryset(self):
-        project_id = self.kwargs["project_id"]
+        project_id = self.kwargs[self.lookup_url_kwarg]
 
         # Check if the user is a contributor to the project
         is_contributor = Contributor.objects.filter(
@@ -248,7 +197,7 @@ class IssueListCreateView(generics.ListCreateAPIView):
 
     def perform_create(self, serializer):
         serializer.save(
-            project_id=self.kwargs["project_id"], author_user_id=self.request.user
+            project_id=self.kwargs[self.lookup_url_kwarg], author_user=self.request.user
         )
 
 
@@ -277,6 +226,7 @@ class IssueRetrieveUpdateDestroyView(generics.RetrieveUpdateDestroyAPIView):
         return Response(serializer.data)
 
     def delete(self, request, *args, **kwargs):
+        print("DELETE")
         instance = self.get_object()
         self.perform_destroy(instance)
         return Response(status=status.HTTP_204_NO_CONTENT)
@@ -290,18 +240,49 @@ class CommentListCreateView(generics.ListCreateAPIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get_queryset(self):
-        issue_id = self.kwargs["issue_id"]
-        return Comment.objects.filter(issue_id=issue_id)
+        project_id = self.kwargs["project_id"]
+        # Check if the user is a contributor to the project
+        is_contributor = Contributor.objects.filter(
+            user_id=self.request.user.id, project_id=project_id
+        ).exists()
+
+        if is_contributor:
+            # Filter comments based on the issue_id
+            return Comment.objects.filter(project=project_id)
+        else:
+            # Return an empty queryset if the user is not a contributor
+            return Comment.objects.none()
 
     def perform_create(self, serializer):
         issue = get_object_or_404(Issue, id=self.kwargs["issue_id"])
-        serializer.save(author_user_id=self.request.user, issue_id=issue)
+        serializer.save(author_user=self.request.user, issue_id=issue)
 
 
 class CommentRetrieveUpdateDestroyView(generics.RetrieveUpdateDestroyAPIView):
     serializer_class = CommentSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [permissions.IsAuthenticated, IsContributor]
+    lookup_url_kwarg = "comment_id"
 
-    def get_queryset(self):
+    def get_object(self):
         issue_id = self.kwargs["issue_id"]
-        return Comment.objects.filter(issue_id=issue_id)
+        comment_id = self.kwargs[self.lookup_url_kwarg]
+        obj = get_object_or_404(Comment, issue_id=issue_id, id=comment_id)
+        self.check_object_permissions(self.request, obj)
+        return obj
+
+    def get(self, request, *args, **kwargs):
+        instance = self.get_object()
+        serializer = self.get_serializer(instance)
+        return Response(serializer.data)
+
+    def perform_update(self, request, serializer):
+        instance = self.get_object()
+        serializer = self.get_serializer(instance, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data)
+
+    def delete(self, request, *args, **kwargs):
+        instance = self.get_object()
+        self.perform_destroy(instance)
+        return Response(status=status.HTTP_204_NO_CONTENT)
