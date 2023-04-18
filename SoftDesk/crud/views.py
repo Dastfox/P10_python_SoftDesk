@@ -226,7 +226,6 @@ class IssueRetrieveUpdateDestroyView(generics.RetrieveUpdateDestroyAPIView):
         return Response(serializer.data)
 
     def delete(self, request, *args, **kwargs):
-        print("DELETE")
         instance = self.get_object()
         self.perform_destroy(instance)
         return Response(status=status.HTTP_204_NO_CONTENT)
@@ -254,8 +253,10 @@ class CommentListCreateView(generics.ListCreateAPIView):
             return Comment.objects.none()
 
     def perform_create(self, serializer):
+        print("CREATE", self.kwargs["issue_id"])
+
         issue = get_object_or_404(Issue, id=self.kwargs["issue_id"])
-        serializer.save(author_user=self.request.user, issue_id=issue)
+        serializer.save(author_user=self.request.user, issue_id=issue.id)
 
 
 class CommentRetrieveUpdateDestroyView(generics.RetrieveUpdateDestroyAPIView):
