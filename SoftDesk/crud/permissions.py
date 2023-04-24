@@ -3,7 +3,7 @@ from rest_framework import generics, permissions, status
 from .models import Contributor, Project
 
 
-class IsContributor(permissions.BasePermission):
+class IsProjectContributor(permissions.BasePermission):
     """
     Custom permission to only allow contributors of a project to modify it.
     """
@@ -20,7 +20,6 @@ class IsContributor(permissions.BasePermission):
             contributor = Contributor.objects.get(
                 user_id=request.user.id, project_id=project_id
             )
-            print("Contributor exists", contributor, obj, request.user)
             if contributor.permission == "admin" or obj.author_user == request.user:
                 return True
 
@@ -31,7 +30,6 @@ class IsContributor(permissions.BasePermission):
                 )
 
         except Contributor.DoesNotExist:
-            print("Contributor does not exist")
             return obj.author_user == request.user
 
         return False
@@ -43,21 +41,7 @@ class IsAuthor(permissions.BasePermission):
     """
 
     def has_object_permission(self, request, view, obj):
-        project_id = obj.project_id
-        try:
-            project = Project.objects.get(pk=project_id)
-        except Project.DoesNotExist:
-            return False
+        return obj.author_user == request.user
 
-        # Check if the request user is the author of the project
-        if project.author_user.id == request.user.id:
-            return True
 
-        # Write permissions are only allowed to the author and admin contributors of the project
-        try:
-            contributor = Contributor.objects.get(
-                user_id=request.user.id, project_id=project_id
-            )
-            return contributor.permission == "admin"
-        except Contributor.DoesNotExist:
-            return False
+

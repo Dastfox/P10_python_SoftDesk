@@ -19,12 +19,12 @@ urlpatterns = [
     # Collaborator endpoints
     path(
         "projects/<int:project_id>/users/",
-        views.CollaboratorListCreateView.as_view(),
+        views.ContributorListCreateView.as_view(),
         name="collaborator-list",
     ),
     path(
         "projects/<int:project_id>/users/<int:user_id>",
-        views.CollaboratorRetrieveUpdateDestroyView.as_view(),
+        views.ContributorRetrieveUpdateDestroyView.as_view(),
         name="collaborator-detail",
     ),
     # Issue endpoints

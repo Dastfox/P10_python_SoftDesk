@@ -7,12 +7,24 @@ class ContributorSerializer(serializers.ModelSerializer):
     class Meta:
         model = Contributor
         fields = "__all__"
+        extra_kwargs = {
+            "project": {"write_only": True},
+        }
 
 
 class ProjectSerializer(serializers.ModelSerializer):
+    author_user = serializers.PrimaryKeyRelatedField(
+        queryset=User.objects.all(), write_only=True, required=False
+    )
+
+    id = serializers.IntegerField(required=False)
+
     class Meta:
         model = Project
         fields = "__all__"
+        extra_kwargs = {
+            "author_user": {"write_only": True},
+        }
 
 
 class IssueSerializer(serializers.ModelSerializer):
