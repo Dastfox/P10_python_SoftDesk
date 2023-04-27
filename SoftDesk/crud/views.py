@@ -318,12 +318,6 @@ class CommentRetrieveUpdateDestroyView(generics.RetrieveUpdateDestroyAPIView):
         self.check_object_permissions(self.request, obj)
         return obj
 
-    def get_permissions(self):
-        if self.request.method == "PUT" or self.request.method == "DELETE":
-            return [permissions.IsAuthenticated, IsAuthor]
-
-        return super().get_permissions()
-
     def put(self, request, *args, **kwargs):
         instance = self.get_object()
         self.check_object_permissions(self.request, instance)
